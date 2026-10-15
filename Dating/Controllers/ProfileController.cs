@@ -89,7 +89,7 @@ namespace Dating.Controllers
                     cmd.Parameters.AddWithValue("@PLanguage", UpdatedUser.ProgrammingLanguage);
                     cmd.Parameters.AddWithValue("@NewUsername", UpdatedUser.Username);
                     cmd.Parameters.AddWithValue("@CurrentUsername", currentUsername);
-
+                     
                     cmd.ExecuteNonQuery();
                 }
             }

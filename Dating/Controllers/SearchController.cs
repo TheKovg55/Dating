@@ -1,15 +1,14 @@
 ﻿using Dating.Models;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Web;
 using System.Web.Mvc;
+using MySqlConnector;
 
 namespace Dating.Controllers
 {
     public class SearchController : Controller
     {
-        // GET: Search (single action handles optional query param to avoid ambiguous action matches)
+        // GET: Search with multi-criteria filters querying MySQL
         public ActionResult Search(string username = null, int? minAge = null, int? maxAge = null, string programmingLanguage = null)
         {
             // Ensure that the user is logged in
@@ -21,85 +20,73 @@ namespace Dating.Controllers
             LoadProgrammingLanguages();
 
             string currentUsername = Session["Username"].ToString();
-            string path = Server.MapPath("~/App_Data/Users.txt");
-
             List<Register> userList = new List<Register>();
 
-            if (System.IO.File.Exists(path))
-            {
-                string[] lines = System.IO.File.ReadAllLines(path);
-                foreach (string line in lines)
-                {
-                    if (string.IsNullOrWhiteSpace(line))
-                    {
-                        continue; // Skip empty lines
-                    }
+            // Build base SQL query, excluding the currently logged-in user
+            string query = "SELECT * FROM Student WHERE Username != @CurrentUsername";
 
-                    Register user = new Register();
-                    string[] fields = line.Split(',');
-                    foreach (string field in fields)
-                    {
-                        string[] keyValue = field.Split(':');
-                        if (keyValue.Length == 2)
-                        {
-                            string key = keyValue[0].Trim();
-                            string value = keyValue[1].Trim();
-                            switch (key)
-                            {
-                                case "Firstname":
-                                    user.FirstName = value;
-                                    break;
-                                case "Lastname":
-                                    user.LastName = value;
-                                    break;
-                                case "Age":
-                                    int.TryParse(value, out int age);
-                                    user.Age = age;
-                                    break;
-                                case "Programming Language":
-                                    user.ProgrammingLanguage = value;
-                                    break;
-                                case "Username":
-                                    user.Username = value;
-                                    break;
-                            }
-                        }
-                    }
-
-                    // Exclude current user
-                    if (!string.Equals(user.Username, currentUsername, StringComparison.OrdinalIgnoreCase))
-                    {
-                        userList.Add(user);
-                    }
-                }
-            }
-
-            // If a search term was provided, filter the list
+            // Dynamically append filters if provided by the user
             if (!string.IsNullOrWhiteSpace(username))
             {
-                userList = userList.Where(u =>
-                    (u.FirstName != null && u.FirstName.IndexOf(username, StringComparison.OrdinalIgnoreCase) >= 0) ||
-                    (u.LastName != null && u.LastName.IndexOf(username, StringComparison.OrdinalIgnoreCase) >= 0) ||
-                    (u.Username != null && u.Username.IndexOf(username, StringComparison.OrdinalIgnoreCase) >= 0)
-                ).ToList();
+                query += " AND (Name LIKE @Username OR FName LIKE @Username OR Username LIKE @Username)";
             }
-
-            // Filter by age range if provided
             if (minAge.HasValue)
             {
-                userList = userList.Where(u => u.Age >= minAge.Value).ToList();
+                query += " AND Age >= @MinAge";
             }
             if (maxAge.HasValue)
             {
-                userList = userList.Where(u => u.Age <= maxAge.Value).ToList();
+                query += " AND Age <= @MaxAge";
             }
-
-            //filter by programming language if provided
-            if(!string.IsNullOrWhiteSpace(programmingLanguage))
+            if (!string.IsNullOrWhiteSpace(programmingLanguage))
             {
-                userList = userList.Where(u => string.Equals(u.ProgrammingLanguage, programmingLanguage, StringComparison.OrdinalIgnoreCase)).ToList();
+                query += " AND PLanguage = @PLanguage";
             }
 
+            using (MySqlConnection conn = MySqlConnector())
+            {
+                using (MySqlCommand cmd = new MySqlCommand(query, conn))
+                {
+                    cmd.Parameters.AddWithValue("@CurrentUsername", currentUsername);
+
+                    if (!string.IsNullOrWhiteSpace(username))
+                    {
+                        cmd.Parameters.AddWithValue("@Username", "%" + username + "%");
+                    }
+                    if (minAge.HasValue)
+                    {
+                        cmd.Parameters.AddWithValue("@MinAge", minAge.Value);
+                    }
+                    if (maxAge.HasValue)
+                    {
+                        cmd.Parameters.AddWithValue("@MaxAge", maxAge.Value);
+                    }
+                    if (!string.IsNullOrWhiteSpace(programmingLanguage))
+                    {
+                        cmd.Parameters.AddWithValue("@PLanguage", programmingLanguage);
+                    }
+
+                    using (MySqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            Register user = new Register();
+                            user.FirstName = reader["Name"]?.ToString();
+                            user.LastName = reader["FName"]?.ToString();
+
+                            if (int.TryParse(reader["Age"]?.ToString(), out int age))
+                            {
+                                user.Age = age;
+                            }
+
+                            user.ProgrammingLanguage = reader["PLanguage"]?.ToString();
+                            user.Username = reader["Username"]?.ToString();
+
+                            userList.Add(user);
+                        }
+                    }
+                }
+            }
 
             return View(userList);
         }
@@ -108,6 +95,13 @@ namespace Dating.Controllers
         {
             string[] programmingLanguages = new string[] { "C#", "Java", "Python", "JavaScript", "Ruby", "Go", "Rust", "Swift" };
             ViewBag.ProgrammingLanguages = programmingLanguages;
+        }
+
+        public MySqlConnection MySqlConnector()
+        {
+            MySqlConnection conn = new MySqlConnection("server=localhost;user id=root;password=;database=TeccartDating");
+            conn.Open();
+            return conn;
         }
     }
 }
