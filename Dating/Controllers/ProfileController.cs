@@ -1,7 +1,7 @@
 ﻿using Dating.Models;
 using System;
-using System.IO;
 using System.Web.Mvc;
+using MySqlConnector;
 
 namespace Dating.Controllers
 {
@@ -10,148 +10,108 @@ namespace Dating.Controllers
         // GET: Profile
         public ActionResult Profile()
         {
-            // check if session variable is null
+            // 1. Check if session variable is null
             if (Session["Username"] == null)
             {
                 return RedirectToAction("Login", "Login");
             }
 
-            //reloading the programming languages to the view
+            // Reload programming languages for the dropdown
             LoadProgrammingLanguages();
 
-            // get the username from the session variable
-            string username = Session["Username"].ToString();
-
-            // create the user object
+            string currentUsername = Session["Username"].ToString();
             Register user = new Register();
 
-            // We read the file now:
-            string filePath = Server.MapPath("~/App_Data/Users.txt");
-            if (System.IO.File.Exists(filePath))
+            // 2. Query MySQL to fetch the logged-in user's details
+            string query = "SELECT * FROM Student WHERE Username = @Username";
+
+            using (MySqlConnection conn = MySqlConnector())
             {
-                StreamReader reader = new StreamReader(filePath);
-                string line;
-
-                // Read the file line by line
-                while ((line = reader.ReadLine()) != null)
+                using (MySqlCommand cmd = new MySqlCommand(query, conn))
                 {
-                    // 1. FIRST check if this line belongs to the logged-in user
-                    if (line.Contains($"Username: {username},"))
+                    cmd.Parameters.AddWithValue("@Username", currentUsername);
+
+                    using (MySqlDataReader reader = cmd.ExecuteReader())
                     {
-                        // Split the line into fields
-                        string[] fields = line.Split(',');
-
-                        // splitting the fields into key value pairs
-                        foreach (string field in fields)
+                        if (reader.Read())
                         {
-                            string[] keyValue = field.Split(':');
+                            user.FirstName = reader["Name"]?.ToString();
+                            user.LastName = reader["FName"]?.ToString();
 
-                            if (keyValue.Length == 2)
+                            if (int.TryParse(reader["Age"]?.ToString(), out int age))
                             {
-                                string key = keyValue[0].Trim();
-                                string value = keyValue[1].Trim();
-
-                                // 2. Keys match the exact casing used in StreamWriter ("Firstname", "Lastname", "Programming Language")
-                                switch (key)
-                                {
-                                    case "Firstname":
-                                        user.FirstName = value;
-                                        break;
-                                    case "Lastname":
-                                        user.LastName = value;
-                                        break;
-                                    case "Age":
-                                        int.TryParse(value, out int age);
-                                        user.Age = age;
-                                        break;
-                                    case "Programming Language":
-                                        user.ProgrammingLanguage = value;
-                                        break;
-                                    case "Username":
-                                        user.Username = value;
-                                        break;
-                                    case "Password":
-                                        user.Password = value;
-                                        break;
-                                }
+                                user.Age = age;
                             }
-                        }
 
-                        // 3. Exit the loop ONLY after finding and parsing the correct user!
-                        break;
+                            user.ProgrammingLanguage = reader["PLanguage"]?.ToString();
+                            user.Username = reader["Username"]?.ToString();
+                            user.Password = reader["Password"]?.ToString();
+                        }
                     }
                 }
-                reader.Close();
             }
 
-            // return the user to the view
             return View(user);
         }
 
-        // logout method
+        // Logout method
         public ActionResult Logout()
         {
-            // clear the session variable
             Session.Clear();
             Session.Abandon();
-
-            // redirect to the login page
             return RedirectToAction("Login", "Login");
         }
 
         [HttpPost]
         public ActionResult Profile(Register UpdatedUser)
-        {   
-
-            //Check if the session variable is still valid
-
+        {
+            // Check session validity
             if (Session["Username"] == null)
             {
                 return RedirectToAction("Login", "Login");
             }
-            //reloading the programming languages to the view
+
             LoadProgrammingLanguages();
 
-            //store the username and filepath in a variable to save typing it multiple times
-            string username = Session["Username"].ToString();  
-            string path = Server.MapPath("~/App_Data/Users.txt");
+            string currentUsername = Session["Username"].ToString();
 
-            if(System.IO.File.Exists(path))
+            // SQL Update statement matching your phpMyAdmin columns
+            string query = "UPDATE Student SET Name = @Name, FName = @FName, Age = @Age, " +
+                           "PLanguage = @PLanguage, Username = @NewUsername WHERE Username = @CurrentUsername";
+
+            using (MySqlConnection conn = MySqlConnector())
             {
-                //Reading all the lines from the file
-                string[] lines = System.IO.File.ReadAllLines(path);
-
-                //The code to insert into the text file:
-                string newLine = $"Firstname: {UpdatedUser.FirstName}, Lastname: {UpdatedUser.LastName}, Age: {UpdatedUser.Age}, Programming Language: {UpdatedUser.ProgrammingLanguage}, Username: {UpdatedUser.Username}, Password: {UpdatedUser.Password}";
-
-                //Using a loop to check through the entire document for the username and replace it with the new line:
-                for (int i  = 0; i  < lines.Length; i ++)
+                using (MySqlCommand cmd = new MySqlCommand(query, conn))
                 {
-                    if (lines[i].Contains($"Username: {username},")){
-                        lines[i] = newLine;
-                        break;
-                    }
+                    cmd.Parameters.AddWithValue("@Name", UpdatedUser.FirstName);
+                    cmd.Parameters.AddWithValue("@FName", UpdatedUser.LastName);
+                    cmd.Parameters.AddWithValue("@Age", UpdatedUser.Age);
+                    cmd.Parameters.AddWithValue("@PLanguage", UpdatedUser.ProgrammingLanguage);
+                    cmd.Parameters.AddWithValue("@NewUsername", UpdatedUser.Username);
+                    cmd.Parameters.AddWithValue("@CurrentUsername", currentUsername);
+
+                    cmd.ExecuteNonQuery();
                 }
-
-                //This is to rewrite the entire file with the updated line:
-                System.IO.File.WriteAllLines(path, lines);
-
-                //updating the username
-                Session["Username"] = UpdatedUser.Username;
-                ViewBag.UpdateMessage = "Profile updated successfully!";
-
             }
 
+            // Update session variable in case they changed their username
+            Session["Username"] = UpdatedUser.Username;
+            ViewBag.UpdateMessage = "Profile updated successfully!";
+
             return View(UpdatedUser);
-
-
-
         }
 
         public void LoadProgrammingLanguages()
         {
             string[] programmingLanguages = new string[] { "C#", "Java", "Python", "JavaScript", "Ruby", "Go", "Rust", "Swift" };
             ViewBag.ProgrammingLanguages = programmingLanguages;
+        }
+
+        public MySqlConnection MySqlConnector()
+        {
+            MySqlConnection conn = new MySqlConnection("server=localhost;user id=root;password=;database=TeccartDating");
+            conn.Open();
+            return conn;
         }
     }
 }
